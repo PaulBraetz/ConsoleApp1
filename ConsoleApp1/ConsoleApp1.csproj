@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<LangVersion>latest</LangVersion>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Basic.Reference.Assemblies" Version="1.7.4" />
+		<PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
+		<PackageReference Include="CsvHelper" Version="33.0.1" />
+		<PackageReference Include="DotNetIsolator" Version="0.1.0-preview.10032" />
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+		<PackageReference Include="MSBuildTasks" Version="1.5.0.235">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+		<PackageReference Include="Sep" Version="0.5.5" />
+		<PackageReference Include="Spectre.Console" Version="0.49.1" />
+		<PackageReference Include="Spectre.Console.Cli" Version="0.49.1" />
+		<PackageReference Include="System.IO.Pipelines" Version="8.0.0" />
+	</ItemGroup>
+
+</Project>
