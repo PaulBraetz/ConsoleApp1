@@ -19,7 +19,7 @@ public class CsvSequenceReaderTests
         var path = PrepareCsvFile("0000021001,2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh");
         using var fileManager = MappedFileManager.Create(path);
         using var viewManager = fileManager.CreateView();
-        var reader = CsvSequenceReader.Create(viewManager);
+        var reader = CsvSequenceReader.Create(new(viewManager.Memory));
 
         var success = reader.TryReadRecord(out var record);
         Assert.True(success);
@@ -33,7 +33,7 @@ public class CsvSequenceReaderTests
         var path = PrepareCsvFile("0000021001,2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh");
         using var fileManager = MappedFileManager.Create(path);
         using var viewManager = fileManager.CreateView(offset: 0, size: 16);
-        var reader = CsvSequenceReader.Create(viewManager);
+        var reader = CsvSequenceReader.Create(new(viewManager.Memory));
 
         var success = reader.TryReadRecord(out var record);
         Assert.True(success);

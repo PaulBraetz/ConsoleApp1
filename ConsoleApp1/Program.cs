@@ -20,36 +20,124 @@ using System.Diagnostics;
 using BenchmarkDotNet.Running;
 using System.IO.MemoryMappedFiles;
 using System.Globalization;
-
+using System.Threading.Channels;
+using System.Buffers;
+using System.Runtime.InteropServices.Marshalling;
+using System.Text;
 internal class Program
 {
-    private static async Task Main() => RunCsvReaderBenchmark();
+    private static async Task Main() => RunSlidingWindowCsvReader();
+
     static void RunSlidingWindowCsvReader()
     {
-        //var path = Path.GetTempFileName();
-        //File.WriteAllLines(
-        //    path,
-        //    Enumerable.Range(1, 1_000_000)
-        //        .Select(i => "0000021000,2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh")
-        //        .Prepend("id,timestamp,measurement,unit"));
+        var path = Path.GetTempFileName();
+        File.WriteAllLines(
+            path,
+            Enumerable.Range(1, 10)
+                .Select(i => $"{i:D10},2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh")
+                .Prepend("id,timestamp,measurement,unit"));
+        {
+            using var fileManager = MappedFileManager.Create(path);
 
-        //using var fileManager = MappedFileManager.Create(path);
+            const Int32 size = 4096;
+            var viewIndex = 0;
 
-        //const Int32 size = 32;
+            List<(Memory<Byte> memory, IMemoryOwner<Byte>? owner)> head = [];
 
-        //using var viewManager1 = fileManager.CreateView(offset:0, size:size);
-        //var reader1 = CsvSequenceReader.Create(viewManager1);
-        //var enumerator1 = new RecordEnumerator(reader1);
-        //foreach(var record in enumerator1)
-        //    Console.WriteLine(record);
+            for(var remainder = fileManager.Length; remainder > 0; remainder -= size)
+            {
+                var pageSize = Math.Min(remainder, size);
+                var offset = fileManager.Length - remainder;
+                var viewManager = fileManager.CreateView(offset, pageSize);
 
-        //viewManager1.
+                const Int32 tailScanSequenceSize = 512;
+                Byte[] newLine = [(Byte)'\r', (Byte)'\n'];
 
-        //File.Delete(path);
+                var tailReader = new SequenceReader<Byte>(new(viewManager.Memory));
+                tailReader.AdvanceToEnd();
+                while(true)
+                {
+                    var scanSequenceSize = checked((Int32)Math.Min(tailReader.Consumed, tailScanSequenceSize));
+                    if(scanSequenceSize == 0)
+                        break; //no newline in entire window
+
+                    tailReader.Rewind(scanSequenceSize);
+                    if(!tailReader.TryReadExact(scanSequenceSize, out var scanSequence))
+                        throw new InvalidOperationException(); //we should never get here
+
+                    tailReader.Rewind(scanSequenceSize);
+
+                    var newLineIndex = scanSequence.FirstSpan.LastIndexOf(newLine);
+                    if(newLineIndex == -1)
+                        continue; //no newline in current scan sequence
+
+                    tailReader.Advance(newLineIndex);
+                    tailReader.Advance(newLine.Length);
+
+                    break;
+                }
+
+                var tailBegin = checked((Int32)tailReader.Consumed);
+                var tailLength = viewManager.Memory.Length - tailBegin;
+                var bodyBegin = 0;
+                var bodyLength = tailBegin;
+
+                (Memory<Byte> memory, IMemoryOwner<Byte> owner)? ourTail = null;
+
+                if(tailLength > 0)
+                    ourTail = (viewManager.Memory.Slice(tailBegin, tailLength), viewManager);
+
+                var (ourBodyMemory, ourBodyOwner) = tailLength > 0
+                    ? (viewManager.Memory.Slice(bodyBegin, bodyLength), null)
+                    : (viewManager.Memory, viewManager);
+
+                if(ourBodyMemory.Length == 0)
+                    throw new InvalidOperationException("view size too small");
+
+                var segment = new ByteSequenceSegment(ourBodyMemory, ourBodyOwner);
+                var last = segment;
+                var endIndex = ourBodyMemory.Length;
+                for(var i = head.Count - 1; i >= 0; i--)
+                {
+                    var (memory, owner) = head[i];
+                    segment = segment?.Prepend(memory, owner) ?? ( last = new(memory, owner) );
+                    endIndex += memory.Length;
+                }
+
+                ReadOnlySequence<Byte> sequence = new(segment!, startIndex: 0, last, endIndex: ourBodyMemory.Length);
+                //var channelItem = (sequence, owner:segment);
+                
+                var reader = CsvSequenceReader.Create(sequence);
+                var enumerator = new RecordEnumerator(reader);
+
+                Console.WriteLine($"page {viewIndex++},offset {offset}, pagesize {pageSize}, bodySize {ourBodyMemory.Length}+{head.Sum(t => t.memory.Length)}, tail {( ourTail.HasValue ? ourTail.Value.memory.Length : 0 )}");
+                var enumeratedOnce = false;
+                foreach(var record in enumerator)
+                {
+                    enumeratedOnce = true;
+                    Console.WriteLine(record);
+                }
+
+                if(enumeratedOnce)
+                {
+                    segment.Dispose();
+                    head.Clear();
+                } else if(ourBodyMemory.Length > 0)
+                {
+                    head.Add((ourBodyMemory, ourBodyOwner));
+                }
+
+                if(ourTail.HasValue)
+                    head.Add(ourTail.Value);
+            }
+        }
+
+        File.Delete(path);
     }
+
     static void RunCsvReaderBenchmark()
     {
-        Console.WriteLine($"reference: {( 6.634817514544766 * 1e6 ).ToString(CultureInfo.InvariantCulture)}");
+        Console.WriteLine($"{"reference",-16}: {6.634817514544766 * 1e6}");
         new (String, Func<CsvReaderBenchmark, Double>)[]
         {
             (nameof(CsvReaderBenchmark.CsvHelper),b=>b.CsvHelper()),
@@ -63,11 +151,12 @@ internal class Program
             var benchmark = new CsvReaderBenchmark();
             benchmark.GlobalSetup();
             var sum = t.Item2.Invoke(benchmark);
+            benchmark.GlobalCleanup();
             Console.WriteLine($"{t.Item1,-16}: {sum}");
         });
 
         var summary = BenchmarkRunner.Run<CsvReaderBenchmark>();
-        Process.Start("explorer", summary.LogFilePath).WaitForExit();
+        //Process.Start("explorer", summary.LogFilePath).WaitForExit();
     }
 
     static async Task Run_Winter_InterviewAlgoBenchmark()

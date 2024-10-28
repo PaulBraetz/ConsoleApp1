@@ -13,6 +13,7 @@ using CsvHelper;
 using System.Globalization;
 using CsvHelper.Configuration.Attributes;
 using BenchmarkDotNet.Jobs;
+using System.Text;
 
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.ColdStart, launchCount: 10, iterationCount: 1, id: "ColdStart")]
@@ -22,12 +23,13 @@ public class CsvReaderBenchmark
     [GlobalSetup]
     public void GlobalSetup()
     {
-        _path = Path.GetTempFileName();
+        _path = Path.ChangeExtension(Path.GetTempFileName(), ".csv");
         File.WriteAllLines(
             _path,
             Enumerable.Range(1, 1_000_000)
-                .Select(i => "0000021000,2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh")
-                .Prepend("Id,Timestamp,Measurement,Unit"));
+                .Select(i => $"{i:D10},2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh")
+                .Prepend("Id,Timestamp,Measurement,Unit"),
+            Encoding.UTF8);
         _ = File.ReadAllBytes(_path);
         GC.Collect();
     }
@@ -42,11 +44,11 @@ public class CsvReaderBenchmark
     {
         var reader = new SepReader(_path);
 
-        var sum = 0d;
+        var result = 0d;
         foreach(var (_, _, measurement) in reader.Read())
-            sum += measurement;
+            result += measurement;
 
-        return sum;
+        return result;
     }
     struct CsvHelperRecord
     {
@@ -71,7 +73,7 @@ public class CsvReaderBenchmark
     public Double StreamReader()
     {
         using var reader = new StreamReader(_path);
-        Double result = 0;
+        var result = 0d;
         while(reader.ReadLine() is { } line)
         {
             if(line.Split(',') is [{ } idStr, { } timestampStr, { } measurementStr, ..]
@@ -90,22 +92,22 @@ public class CsvReaderBenchmark
     {
         var reader = new SepReader(_path);
 
-        var sum = reader.Read().AsParallel().Sum(t => t.measurement);
+        var result = reader.Read().Sum(r => r.measurement);
 
-        return sum;
+        return result;
     }
-    //[Benchmark]
+    [Benchmark]
     public Double SequenceReader()
     {
         using var fileManager = MappedFileManager.Create(_path);
         using var viewManager = fileManager.CreateView();
-        var reader = CsvSequenceReader.Create(viewManager);
+        var reader = CsvSequenceReader.Create(new(viewManager.Memory));
         var enumerator = new RecordEnumerator(reader);
 
-        var sum = 0d;
-        foreach(var (_, _, measurement) in enumerator)
-            sum += measurement;
+        var result = 0d;
+        foreach(var (id, _, measurement) in enumerator)
+            result += measurement;
 
-        return sum;
+        return result;
     }
 }
