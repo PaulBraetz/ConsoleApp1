@@ -24,9 +24,67 @@ using System.Threading.Channels;
 using System.Buffers;
 using System.Runtime.InteropServices.Marshalling;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.AI;
+using OpenAI.Chat;
+using OpenAI;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System.ClientModel;
+using BenchmarkDotNet.Toolchains.CsProj;
+
 internal class Program
 {
-    private static async Task Main() => RunSlidingWindowCsvReader();
+    private static async Task Main() => await RunChatClient();
+
+    private static async Task RunChatClient()
+    {
+        var serviceProvider = new ServiceCollection()
+            .AddLogging(b => b.AddConsole())
+            .AddKeyedChatClient("local", b =>
+                b.UseLogging().Use(
+                    new OpenAIChatClient(
+                        new OpenAIClient(
+                            new ApiKeyCredential("nokey"),
+                            new OpenAIClientOptions() { Endpoint = new("http://localhost:6642/v1/") }),
+                        "gpt-4o")))
+            .AddKeyedChatClient("remote", b =>
+                b.UseLogging().Use(
+                    new OpenAIChatClient(
+                        new OpenAIClient(
+                            new ApiKeyCredential(new ConfigurationManager().AddJsonFile("appsettings.secrets.json", optional: false).Build().GetValue<String>("OpenAiKey") ?? throw new Exception("no api key found"))),
+                        "gpt-4o")))
+            .BuildServiceProvider();
+
+        var local = serviceProvider.GetRequiredKeyedService<IChatClient>("local");
+        var remote = serviceProvider.GetRequiredKeyedService<IChatClient>("remote");
+        var (client, key) = (local, "local");
+
+        while(true)
+        {
+            try
+            {
+                Console.Write($"[{key}] User: ");
+                var prompt = Console.ReadLine() ?? String.Empty;
+                if(prompt == "remote")
+                {
+                    (client, key) = (remote, prompt);
+                    continue;
+                } else if(prompt == "local")
+                {
+                    (client, key) = (local, prompt);
+                    continue;
+                }
+
+                var response = await client.CompleteAsync(prompt);
+                Console.Write("Assistant: ");
+                Console.WriteLine(response.Message);
+            } catch(Exception ex)
+            {
+                Console.WriteLine(ex);
+            }
+        }
+    }
 
     static void RunSlidingWindowCsvReader()
     {
@@ -106,7 +164,7 @@ internal class Program
 
                 ReadOnlySequence<Byte> sequence = new(segment!, startIndex: 0, last, endIndex: ourBodyMemory.Length);
                 //var channelItem = (sequence, owner:segment);
-                
+
                 var reader = CsvSequenceReader.Create(sequence);
                 var enumerator = new RecordEnumerator(reader);
 
