@@ -4,9 +4,6 @@ using System;
 using System.Buffers;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;
-using System.Threading;
-
-using Microsoft.Diagnostics.Tracing.Parsers.AspNet;
 
 /// <summary>
 /// A <see cref="MemoryManager{Byte}"/> over a region of a memory mapped file. This <see cref="MemoryManager{Byte}"/>

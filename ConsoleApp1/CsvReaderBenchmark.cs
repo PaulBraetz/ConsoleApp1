@@ -11,7 +11,6 @@ using BenchmarkDotNet.Engines;
 using CsvHelper.Configuration;
 using CsvHelper;
 using System.Globalization;
-using CsvHelper.Configuration.Attributes;
 using BenchmarkDotNet.Jobs;
 using System.Text;
 

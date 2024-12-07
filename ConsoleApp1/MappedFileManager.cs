@@ -6,34 +6,33 @@ using System.IO.MemoryMappedFiles;
 
 public sealed class MappedFileManager : IDisposable
 {
-    MappedFileManager(MemoryMappedFile file)
+    MappedFileManager(MemoryMappedFile file, Int64 length)
     {
         _file = file;
 
         if(_file.SafeMemoryMappedFileHandle.IsClosed || _file.SafeMemoryMappedFileHandle.IsInvalid)
             throw new InvalidOperationException();
+
+        Length = length;
     }
 
     readonly MemoryMappedFile _file;
-    public Int64 Length { get; private set; }
-    //0 has special meaning for view accessor
+    public Int64 Length { get; }
+    // 0 has special meaning for view accessor
     const Int64 _defaultSize = 0;
 
     public static MappedFileManager Create(String path)
     {
         var rs = File.OpenRead(path);
         var file = MemoryMappedFile.CreateFromFile(
-            rs, 
-            mapName:null,
-            capacity:0,
+            rs,
+            mapName: null,
+            capacity: 0,
             MemoryMappedFileAccess.Read,
             HandleInheritability.None,
-            leaveOpen:false);
-        
-        var result = new MappedFileManager(file)
-        {
-            Length = rs.Length
-        };
+            leaveOpen: false);
+
+        var result = new MappedFileManager(file, rs.Length);
 
         return result;
     }

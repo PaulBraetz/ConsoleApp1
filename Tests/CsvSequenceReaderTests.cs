@@ -1,6 +1,5 @@
 namespace Tests;
 
-using System.ComponentModel;
 using System.Globalization;
 
 using ConsoleApp1;

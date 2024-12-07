@@ -1,14 +1,12 @@
 ﻿namespace ConsoleApp1;
 
 using System;
-using System.Linq;
 
 using Microsoft.CodeAnalysis;
 using Spectre.Console;
 using System.Buffers;
 using System.Buffers.Text;
 using System.Globalization;
-using System.IO;
 
 public ref struct CsvSequenceReader
 {

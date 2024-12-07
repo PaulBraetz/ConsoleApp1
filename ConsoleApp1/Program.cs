@@ -9,7 +9,6 @@ using Microsoft.CodeAnalysis.CSharp;
 
 using Microsoft.CodeAnalysis;
 using DotNetIsolator;
-using ConsoleApp1;
 using Wasmtime;
 using System.Runtime.Serialization;
 using System.Collections.Generic;
@@ -18,74 +17,82 @@ using System.Collections.Concurrent;
 using Spectre.Console;
 using System.Diagnostics;
 using BenchmarkDotNet.Running;
-using System.IO.MemoryMappedFiles;
-using System.Globalization;
-using System.Threading.Channels;
 using System.Buffers;
-using System.Runtime.InteropServices.Marshalling;
 using System.Text;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.AI;
-using OpenAI.Chat;
-using OpenAI;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using System.ClientModel;
-using BenchmarkDotNet.Toolchains.CsProj;
 
 internal class Program
 {
-    private static async Task Main() => await RunChatClient();
+    private static async Task Main(String[] args) => RunDynamicallyAllocatedBufferBenchmark();
 
-    private static async Task RunChatClient()
+    static void RunDynamicallyAllocatedBufferBenchmark()
     {
-        var serviceProvider = new ServiceCollection()
-            .AddLogging(b => b.AddConsole())
-            .AddKeyedChatClient("local", b =>
-                b.UseLogging().Use(
-                    new OpenAIChatClient(
-                        new OpenAIClient(
-                            new ApiKeyCredential("nokey"),
-                            new OpenAIClientOptions() { Endpoint = new("http://localhost:6642/v1/") }),
-                        "gpt-4o")))
-            .AddKeyedChatClient("remote", b =>
-                b.UseLogging().Use(
-                    new OpenAIChatClient(
-                        new OpenAIClient(
-                            new ApiKeyCredential(new ConfigurationManager().AddJsonFile("appsettings.secrets.json", optional: false).Build().GetValue<String>("OpenAiKey") ?? throw new Exception("no api key found"))),
-                        "gpt-4o")))
-            .BuildServiceProvider();
-
-        var local = serviceProvider.GetRequiredKeyedService<IChatClient>("local");
-        var remote = serviceProvider.GetRequiredKeyedService<IChatClient>("remote");
-        var (client, key) = (local, "local");
-
-        while(true)
+#if DEBUG
+        foreach(var data in DynamicallyAllocatedBufferBenchmark.Data)
         {
-            try
-            {
-                Console.Write($"[{key}] User: ");
-                var prompt = Console.ReadLine() ?? String.Empty;
-                if(prompt == "remote")
-                {
-                    (client, key) = (remote, prompt);
-                    continue;
-                } else if(prompt == "local")
-                {
-                    (client, key) = (local, prompt);
-                    continue;
-                }
+            Debug.Assert(new DynamicallyAllocatedBufferBenchmark().Run((Int32)data[0], (Int32)data[1]) == (Int32)data[1]);
+        }
+#else
+        var summaries = BenchmarkRunner.Run(
+        [
+            typeof(DynamicallyAllocatedBufferBenchmark)
+        ]);
+        foreach(var summary in summaries)
+        {
+            _ = Process.Start("explorer", summary.LogFilePath);
+        }
+#endif
+    }
 
-                var response = await client.CompleteAsync(prompt);
-                Console.Write("Assistant: ");
-                Console.WriteLine(response.Message);
-            } catch(Exception ex)
+    record struct Record(Int32 Id, Double Value, String Day);
+
+    static void ParseCsv()
+    {
+        var path = Path.GetTempFileName();
+        File.WriteAllLines(
+            path,
+            Enumerable.Range(1, 10)
+                .Select(i => $"{i:D10},2024-10-21T20:46:18.1937080+00:00,6.634817514544766,kWh")
+                .Prepend("id,timestamp,measurement,unit"));
+        {
+            using var fileManager = MappedFileManager.Create(path);
+
+            const Int32 requestedPageSize = 4096;
+            var viewIndex = 0;
+
+            for(var remainder = fileManager.Length; remainder > 0; remainder -= requestedPageSize)
             {
-                Console.WriteLine(ex);
+                var pageSize = Math.Min(remainder, requestedPageSize);
+                var offset = fileManager.Length - remainder;
+                var viewManager = fileManager.CreateView(offset, pageSize);
+                //TODO
             }
+        }
+
+        File.Delete(path);
+    }
+    static void RunUtf8Benchmark()
+    {
+        var summaries = BenchmarkRunner.Run(
+        [
+            typeof(Utf8EnumerableBufferLengthBenchmark),
+            typeof(Utf8EnumerableInputLengthBenchmark)
+        ]);
+        foreach(var summary in summaries)
+        {
+            _ = Process.Start("explorer", summary.LogFilePath);
         }
     }
 
+    static void RunUtf8Decoder()
+    {
+        var encoding = Encoding.UTF8;
+        var inputString = String.Join(' ', Enumerable.Range(0, 10).Select(i => $"Hello, World {i}!"));
+        ReadOnlySpan<Byte> source = encoding.GetBytes(inputString);
+        Span<Char> buffer = stackalloc Char[Utf8CharEnumerable.RequiredBufferLength];
+
+        foreach(var c in source.ToCharEnumerable(buffer))
+            Console.Write(c);
+    }
     static void RunSlidingWindowCsvReader()
     {
         var path = Path.GetTempFileName();
@@ -372,32 +379,34 @@ internal class Program
     static class AsyncConsole
     {
         private static readonly Object _inFlightLock = new();
-        private static Task<String?>? _inFlightReadLine;
+
         private static Task<String?> ReadLineTask
         {
             get
             {
-                var inFlightReadLine = _inFlightReadLine;
+                var inFlightReadLine = field;
 
                 if(inFlightReadLine != null)
                     return inFlightReadLine;
 
                 lock(_inFlightLock)
                 {
-                    if(_inFlightReadLine != null)
-                        return _inFlightReadLine;
+                    if(field != null)
+                        return field;
 
                     inFlightReadLine = Task.Run(ReadLine);
-                    _inFlightReadLine = inFlightReadLine;
+                    field = inFlightReadLine;
 
                     return inFlightReadLine;
                 }
             }
+
+            set;
         }
         private static String? ReadLine()
         {
             var result = Console.ReadLine();
-            _inFlightReadLine = null;
+            ReadLineTask = null;
             return result;
         }
         public static async Task<String?> ReadLineAsync(CancellationToken cancellationToken)
